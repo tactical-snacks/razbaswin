@@ -17,6 +17,9 @@ razbaswin list   # show the mouse's HID interfaces
 razbaswin info   # read firmware, serial, poll rate and DPI stages
 razbaswin leds   # read effect and brightness for each LED zone (--raw for bytes)
 razbaswin leds --slot 2                          # read a stored profile bank instead of live state
+razbaswin profiles                               # list the 5 onboard profile slots
+razbaswin profile                                # DPI, lighting, scroll and buttons of the active profile
+razbaswin profile 2 --json                       # one slot (0 = live) as JSON; --raw shows button bytes
 
 razbaswin brightness 50%                         # all zones, saved to the active profile
 razbaswin effect static ff0000 --zone logo       # off | static RRGGBB | spectrum | wave
@@ -34,7 +37,7 @@ You can also run it without installing: `python -m razbaswin info`.
 - [x] Hello world: read device info (firmware, serial, poll rate, DPI)
 - [x] Read LEDs
 - [x] Write LEDs
-- [ ] Read profiles
+- [x] Read profiles
 - [ ] Back up profiles
 - [ ] Reset to factory defaults
 - [ ] Write profiles
@@ -54,6 +57,9 @@ Commands are 90-byte HID feature reports (report ID 0, transaction ID `0x1F`, XO
 | Current DPI     | `0x04:0x85` |
 | DPI stages      | `0x04:0x86` |
 | Active profile  | `0x05:0x84` |
+| Profile list    | `0x05:0x81` |
+| Scroll mode / acceleration / smart reel | `0x02:0x94` / `0x02:0x96` / `0x02:0x97` |
+| Button binding  | `0x02:0x8C` |
 | LED effect      | `0x0F:0x82` read, `0x0F:0x02` write |
 | LED brightness  | `0x0F:0x84` read, `0x0F:0x04` write |
 

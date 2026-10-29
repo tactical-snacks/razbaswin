@@ -117,15 +117,35 @@ class BasiliskV3:
     def poll_rate(self) -> int | None:
         return protocol.parse_poll_rate(self.transact(0x00, 0x85, 0x01))
 
-    def dpi(self) -> tuple[int, int]:
-        return protocol.parse_dpi(self.transact(0x04, 0x85, 0x07, b"\x00"))
+    def dpi(self, storage: int = protocol.SLOT_LIVE) -> tuple[int, int]:
+        return protocol.parse_dpi(self.transact(0x04, 0x85, 0x07, bytes([storage])))
 
-    def dpi_stages(self) -> protocol.DpiStages:
-        return protocol.parse_dpi_stages(self.transact(0x04, 0x86, 0x26, b"\x00"))
+    def dpi_stages(self, storage: int = protocol.SLOT_LIVE) -> protocol.DpiStages:
+        return protocol.parse_dpi_stages(self.transact(0x04, 0x86, 0x26, bytes([storage])))
 
     def active_profile(self) -> int:
         # 0x05:0x84 reports size 0 but still carries the profile ID in args[0]
         return self.transact(0x05, 0x84, 0x00).raw[8]
+
+    def profile_inventory(self) -> tuple[int, list[int]]:
+        """(max profile ID, assigned profile IDs) from 0x05:0x81."""
+        return protocol.parse_profile_inventory(self.transact(0x05, 0x81, 0x00))
+
+    def scroll_mode(self, storage: int = protocol.SLOT_LIVE) -> int:
+        return self.transact(0x02, 0x94, 0x02, bytes([storage, 0])).raw[9]
+
+    def scroll_acceleration(self, storage: int = protocol.SLOT_LIVE) -> bool:
+        return self.transact(0x02, 0x96, 0x02, bytes([storage, 0])).raw[9] == 0x01
+
+    def smart_reel(self, storage: int = protocol.SLOT_LIVE) -> bool:
+        return self.transact(0x02, 0x97, 0x02, bytes([storage, 0])).raw[9] == 0x01
+
+    def button_block(self, button: int, storage: int = protocol.SLOT_LIVE, hypershift: int = 0) -> bytes:
+        """7-byte function block bound to a button slot (0x02:0x8C)."""
+        r = self.transact(0x02, 0x8C, 0x0A, bytes([storage, button, hypershift]) + bytes(7))
+        if r.raw[8] != storage or r.raw[9] != button:
+            raise DeviceError(f"Button read for {button:#04x} echoed the wrong profile/slot")
+        return r.raw[11:18]
 
     def led_effect(self, led_id: int, storage: int = protocol.SLOT_LIVE) -> protocol.LedEffect:
         args = bytes([storage, led_id]) + bytes(10)

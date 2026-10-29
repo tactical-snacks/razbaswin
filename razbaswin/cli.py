@@ -1,9 +1,21 @@
 import argparse
+import json
 import sys
 
 from . import __version__
 from .device import BASILISK_V3_PID, BasiliskV3, DeviceError, enumerate_devices
-from .protocol import LED_ZONES, SLOT_LIVE, WRITABLE_EFFECTS, ZONE_IDS, effect_payload
+from .profiles import read_profile
+from .protocol import (
+    BUTTON_SLOTS,
+    LED_ZONES,
+    SCROLL_MODES,
+    SLOT_LIVE,
+    WRITABLE_EFFECTS,
+    ZONE_IDS,
+    describe_function_block,
+    effect_payload,
+    led_effect_from_payload,
+)
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -54,6 +66,63 @@ def print_leds(mouse: BasiliskV3, slot: int, zones: list[int], raw: bool = False
 def cmd_leds(args: argparse.Namespace) -> int:
     with BasiliskV3(args.pid) as mouse:
         print_leds(mouse, args.slot, list(LED_ZONES), args.raw)
+    return 0
+
+
+def cmd_profiles(args: argparse.Namespace) -> int:
+    with BasiliskV3(args.pid) as mouse:
+        max_id, assigned = mouse.profile_inventory()
+        active = mouse.active_profile()
+        print(f"Onboard profiles (slots 1-{max_id})")
+        for slot in range(1, max_id + 1):
+            stages = mouse.dpi_stages(slot)
+            effects = sorted({mouse.led_effect(led_id, slot).name for led_id in LED_ZONES})
+            status = "active" if slot == active else "assigned" if slot in assigned else "empty"
+            dpi = "/".join(str(x) for x, _ in stages.stages)
+            print(f"  {'*' if slot == active else ' '} {slot}  {status:<8}  DPI {dpi}  lighting {', '.join(effects)}")
+    return 0
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    with BasiliskV3(args.pid) as mouse:
+        slot = mouse.active_profile() if args.slot is None else args.slot
+        snap = read_profile(mouse, slot)
+        _, assigned = mouse.profile_inventory()
+
+    if args.json:
+        print(json.dumps(snap, indent=2))
+        return 0
+
+    if slot == SLOT_LIVE:
+        print("Live state (slot 0)")
+    else:
+        print(f"Profile {slot} ({'assigned' if slot in assigned else 'empty slot, factory defaults'})")
+
+    x, y = snap["dpi"]
+    print(f"  DPI:        {x}" if x == y else f"  DPI:        {x} x {y}")
+    st = snap["dpi_stages"]
+    print(f"  DPI stages: (active = {st['active_index'] + 1})")
+    for i, (sx, sy) in enumerate(st["stages"]):
+        marker = "*" if i == st["active_index"] else " "
+        print(f"   {marker} {i + 1}: {sx}" if sx == sy else f"   {marker} {i + 1}: {sx} x {sy}")
+
+    print("  Lighting:")
+    for key, zone in snap["lighting"].items():
+        effect = led_effect_from_payload(bytes(2) + bytes.fromhex(zone["effect"]))
+        percent = round(zone["brightness"] * 100 / 255)
+        print(f"    {key:<10} {effect.describe():<28} brightness {zone['brightness']} ({percent}%)")
+
+    sc = snap["scroll"]
+    mode = SCROLL_MODES.get(sc["mode"], f"unknown ({sc['mode']:#04x})")
+    on = {True: "on", False: "off"}
+    print(f"  Scroll:     {mode}, acceleration {on[sc['acceleration']]}, smart reel {on[sc['smart_reel']]}")
+
+    print("  Buttons:")
+    for button, block_hex in snap["buttons"].items():
+        name = BUTTON_SLOTS[int(button, 16)]
+        action = describe_function_block(bytes.fromhex(block_hex))
+        raw = f"  [{block_hex}]" if args.raw else ""
+        print(f"    {name:<19} {action}{raw}")
     return 0
 
 
@@ -161,6 +230,14 @@ def build_parser() -> argparse.ArgumentParser:
     leds.add_argument("--slot", type=slot_number, default=SLOT_LIVE, help="0 = live (default), 1-5 = profile bank")
     leds.add_argument("--raw", action="store_true", help="Also print the raw effect payload bytes")
     leds.set_defaults(func=cmd_leds)
+
+    sub.add_parser("profiles", help="List onboard profile slots").set_defaults(func=cmd_profiles)
+
+    profile = sub.add_parser("profile", help="Read everything stored in one profile")
+    profile.add_argument("slot", nargs="?", type=slot_number, help="1-5, or 0 for live state (default: active profile)")
+    profile.add_argument("--raw", action="store_true", help="Also print raw button function blocks")
+    profile.add_argument("--json", action="store_true", help="Print the snapshot as JSON")
+    profile.set_defaults(func=cmd_profile)
 
     brightness = sub.add_parser("brightness", help="Set LED brightness")
     brightness.add_argument("value", type=brightness_value, help="0-255, or a percentage like 70%%")

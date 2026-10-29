@@ -149,6 +149,82 @@ def parse_dpi_stages(r: Response) -> DpiStages:
     return DpiStages(active_index=active, stages=stages, stage_ids=ids)
 
 
+# --- Profiles --------------------------------------------------------------------
+
+
+def parse_profile_inventory(r: Response) -> tuple[int, list[int]]:
+    # 0x05:0x81 -> [max profile ID, assigned IDs..., 0 padding]
+    count = max(1, r.size)
+    payload = r.raw[8 : 8 + count]
+    return payload[0], [p for p in payload[1:] if p]
+
+
+SCROLL_MODES = {0x00: "tactile", 0x01: "free-spin"}
+
+# Button slots on the Basilisk V3 (OpenSnek's V3-family map, all readable on the test unit).
+BUTTON_SLOTS = {
+    0x01: "Left click",
+    0x02: "Right click",
+    0x03: "Middle click",
+    0x04: "Back",
+    0x05: "Forward",
+    0x09: "Scroll up",
+    0x0A: "Scroll down",
+    0x34: "Wheel tilt left",
+    0x35: "Wheel tilt right",
+    0x0F: "Sensitivity clutch",
+    0x60: "DPI button",
+    0x0E: "Scroll mode button",
+    0x6A: "Profile button",
+}
+
+MOUSE_BUTTONS = {
+    0x01: "left click",
+    0x02: "right click",
+    0x03: "middle click",
+    0x04: "back",
+    0x05: "forward",
+    0x09: "scroll up",
+    0x0A: "scroll down",
+    0x68: "scroll left",
+    0x69: "scroll right",
+}
+
+
+def turbo(interval_ms: int) -> str:
+    # Turbo rate is the repeat interval in ms: factory 0x14 (20) = Synapse's 50 presses/s.
+    return f"turbo {round(1000 / interval_ms)}/s" if interval_ms else "turbo"
+
+
+def describe_function_block(block: bytes) -> str:
+    """Human-readable action for a 7-byte button function block: [class, length, data...].
+
+    The declared length isn't reliable (factory blocks declare 1 while using more
+    bytes), so data is read at fixed positions.
+    """
+    fn, d = block[0], block[2:]
+    if block == bytes(7):
+        return "disabled"
+    if fn == 0x01 and d[0] in MOUSE_BUTTONS:
+        return MOUSE_BUTTONS[d[0]]
+    if fn == 0x02:
+        return f"key {d[1]:#04x}" + (f" + modifiers {d[0]:#04x}" if d[0] else "")
+    if fn == 0x0D:
+        return f"key {d[1]:#04x} ({turbo(d[2] << 8 | d[3])})" + (f" + modifiers {d[0]:#04x}" if d[0] else "")
+    if fn == 0x0E and d[0] in MOUSE_BUTTONS:
+        return f"{MOUSE_BUTTONS[d[0]]} ({turbo(d[1] << 8 | d[2])})"
+    if fn == 0x06 and d[0] == 0x06:
+        return "DPI cycle"
+    if fn == 0x06 and d[0] == 0x05:
+        x, y = d[1] << 8 | d[2], d[3] << 8 | d[4]
+        return f"DPI clutch {x}" if x == y else f"DPI clutch {x} x {y}"
+    if fn == 0x07 and d[0] == 0x04:
+        return "scroll mode toggle"
+    if fn == 0x12 and d[0] == 0x01:
+        return "profile cycle"
+    return f"unknown ({block.hex(' ')})"
+
+
 # --- Lighting --------------------------------------------------------------------
 
 # Slot byte: 0 = live state of the active profile (lost on replug), 1-5 = profile banks.
@@ -212,7 +288,10 @@ class LedEffect:
 
 def parse_led_effect(r: Response) -> LedEffect:
     # 0x0F:0x82 -> [storage, led, effect, param, speed, color count, R, G, B, ...]
-    payload = r.raw[8 : 8 + r.size]
+    return led_effect_from_payload(r.raw[8 : 8 + r.size])
+
+
+def led_effect_from_payload(payload: bytes) -> LedEffect:
     count = payload[5] if len(payload) > 5 else 0
     colors = [tuple(payload[6 + i * 3 : 9 + i * 3]) for i in range(count) if 9 + i * 3 <= len(payload)]
     return LedEffect(

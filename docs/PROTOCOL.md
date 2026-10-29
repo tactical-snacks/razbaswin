@@ -49,9 +49,10 @@ Slot 0 test (scroll-wheel brightness): writing `64` to slot 0 left bank 1 at `17
 |---|---|
 | DPI (current) and DPI stage table | Per bank, mirrored in slot 0 ✅ |
 | LED effect and brightness, per zone | Per bank, mirrored in slot 0 ✅ (reads) |
-| Button bindings (incl. Hypershift layer) | Per bank, mirrored in slot 0 ⚠️ |
-| Scroll mode, acceleration, smart reel | Per bank ⚠️ |
-| Profile name / UUID / owner (250-byte metadata) | Per bank ⚠️ |
+| Button bindings | Per bank, mirrored in slot 0 ✅ (reads) |
+| Hypershift layer | Unclear: reads return the normal-layer blocks ⚠️ |
+| Scroll mode, acceleration, smart reel | Per bank ✅ (reads) |
+| Profile name / UUID / owner (250-byte metadata) | Per bank on the V3 Pro. On the test V3, `05:88` returns status `0x03` for every slot ✅ |
 | Poll rate, sleep timeout, device mode | **Global**, not part of any profile ⚠️ |
 | Per-LED custom frames (underglow animation) | **Neither.** A RAM frame buffer that's lost on restart ⚠️ |
 | Macros, Synapse "cloud" profiles | Not mapped. Synapse keeps most of its profiles on the PC, and only the onboard ones live here. |
@@ -105,6 +106,37 @@ The factory look is spectrum on all three zones at brightness `179` (70%). A per
 Breathing (`02`) and reactive (`05`) writes return status `0x05` (not supported) on the wired V3 ✅, consistent with OpenSnek's off/static/spectrum/wave list for this family.
 
 Real read from the test unit (slot 0, scroll wheel): `00 01 03 01 28 01 ff ff ff`. That's spectrum, with a white placeholder color that spectrum ignores. ✅
+
+## Profile registers
+
+A profile snapshot is assembled from separate reads, each taking the slot as its first argument ✅:
+
+| Register | Read | Reply |
+|---|---|---|
+| DPI | `04:85` | `<slot> <X be16> <Y be16>` |
+| DPI stages | `04:86` | `<slot> <active stage ID> <count> [<id> <X be16> <Y be16> 00 00]×count` |
+| LED effect / brightness | `0F:82` / `0F:84` | see LED registers |
+| Scroll mode | `02:94` | `<slot> <mode>`: `00` tactile, `01` free-spin |
+| Scroll acceleration / smart reel | `02:96` / `02:97` | `<slot> <00/01>` |
+| Button binding | `02:8C` (size `0A`) | `<slot> <button> <layer> <7-byte function block>` |
+
+Profile-level reads: `05:81` returns `<max ID> <assigned IDs…>` (test unit: `05 01`), and `05:84` returns the active ID.
+
+### Button slots
+
+All 13 slots read back on the test unit, with Synapse's factory mapping ✅:
+
+| Slot | Button | Factory block | Meaning |
+|---|---|---|---|
+| `01`–`05` | Left, right, middle, back, forward | `01 01 <n>` | Mouse button *n* |
+| `09` / `0A` | Scroll up / down | `01 01 09` / `01 01 0a` | Mouse "button" 9 / 10 |
+| `34` / `35` | Wheel tilt left / right | `0e 01 68 00 14` / `0e 01 69 00 14` | Scroll left / right, turbo |
+| `0F` | Sensitivity clutch | `06 01 05 01 90 01 90` | DPI clutch, X = Y = 400 |
+| `60` | DPI button | `06 01 06` | DPI cycle |
+| `0E` | Scroll mode button | `07 01 04` | Scroll mode toggle |
+| `6A` | Profile button | `12 01 01` | Profile cycle |
+
+Function block layout: `<class> <length> <data…>`. The declared length isn't reliable (the clutch declares `01` but uses 5 data bytes), so decode by position. Turbo rates are the repeat interval in ms: factory `0x0014` = 20 ms = Synapse's "50 keys per second" ✅.
 
 ## Synapse device package
 
