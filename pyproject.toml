@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "razbaswin"
+version = "0.1.0"
+description = "CLI to control the Razer Basilisk V3 on Windows, using protocol details from OpenSnek"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = ["hidapi>=0.14"]
+
+[project.scripts]
+razbaswin = "razbaswin.cli:main"
+
+[tool.setuptools]
+packages = ["razbaswin"]
