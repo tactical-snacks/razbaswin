@@ -32,6 +32,8 @@ You can also run it without installing: `python -m razbaswin info`.
 
 ## How it talks to the mouse
 
+For the memory model (profiles, slots, what a write touches), see [docs/PROTOCOL.md](docs/PROTOCOL.md).
+
 Commands are 90-byte HID feature reports (report ID 0, transaction ID `0x1F`, XOR checksum over bytes 2–87), as documented in OpenSnek's `USBHIDProtocol.swift`. On Windows, the mouse and keyboard HID collections are locked by the OS. The control channel is reached through the consumer-control collection on **interface 3**.
 
 | Read           | Class:Cmd   |
