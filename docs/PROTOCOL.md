@@ -41,6 +41,8 @@ Every profile-scoped command takes a **slot byte as its first argument**. That o
 
 Current state of the test unit: max profile ID 5, assigned = `[1]`, active = `1`. Banks 2–5 still answer reads, with what look like factory defaults. ✅
 
+Slot 0 test (scroll-wheel brightness): writing `64` to slot 0 left bank 1 at `179`. After a USB replug, slot 0 read `179` again, reloaded from the active bank. ✅
+
 ### What's in a profile, and what isn't
 
 | Setting | Where it lives |
@@ -64,10 +66,10 @@ A write changes **exactly one setting, in one bank, for one zone or button**. Th
 
 | Write target | Effect |
 |---|---|
-| Slot `0` | Visible immediately. No bank changes. Reverts when the mouse reloads its profile (replug, sleep/wake, profile switch). ⚠️ |
-| The **active** bank (usually `1`) | Persists, and is what OpenSnek's own lighting controls do. Other settings in that bank (DPI, buttons) are untouched. ⚠️ |
+| Slot `0` | Visible immediately. No bank changes. Reverts to the active bank on replug ✅. Sleep/wake and profile switch assumed to revert too ⚠️. |
+| The **active** bank (usually `1`) | Persists, and slot 0 picks up the new value immediately ✅. Only the written register syncs: a bank brightness write leaves a temporary slot-0 effect in place ✅. Other settings in the bank (DPI, buttons) are untouched ⚠️. |
 | An **inactive** bank (e.g. `2`) | Persists in that bank only. Nothing visible changes until that profile is selected with `05:04`. On the V3 Pro, selecting it then made slot 0 show the new colors. ⚠️ |
-| Custom frame (`0x0F:0x03`) | Switches the addressed LEDs to a "custom" effect, fed from a 14-cell buffer (logo + scroll wheel + 12 underglow). Never persisted: after a restart the bank's stored effect comes back. ⚠️ |
+| Custom frame (`0x0F:0x03`) | Switches the addressed LEDs to a "custom" effect, fed from a per-LED buffer. OpenSnek uses 14 cells on the V3 Pro. The wired V3 has 11 LEDs (see below), so its cell count likely differs. Never persisted: after a restart the bank's stored effect comes back. ⚠️ |
 
 So an LED write **won't corrupt other profile data**. Two common surprises:
 
@@ -85,9 +87,44 @@ Three zones per bank: `0x01` scroll wheel, `0x04` logo, `0x0A` underglow. ✅
 | Brightness | `0F:84` | `0F:04` | `<slot> <zone> <0–255>` |
 | Effect | `0F:82` (size `0C`) | `0F:02` (size varies) | `<slot> <zone> <effect> <mode> <speed> <n_colors> <RGB>…` |
 
-Effect IDs: `00` off, `01` static, `02` breathing (mode `0` random / `1` single / `2` dual), `03` spectrum, `04` wave (mode = direction), `05` reactive (speed 1–4).
+Effect IDs: `00` off, `01` static, `02` breathing, `03` spectrum, `04` wave (mode = direction 1/2, speed default `0x28`), `05` reactive.
+
+Write payloads accepted by the test unit ✅:
+
+| Effect | Bytes after `<slot> <zone>` |
+|---|---|
+| off | `00 00 00 00` |
+| static | `01 00 00 01 R G B` |
+| spectrum | `03 01 28 01 ff ff ff` (factory payload) |
+| wave | `04 <dir> <speed> 00` |
+
+Wave speed behaves like a step interval: `0x01` is very fast, and `0xFF` is slow with visible color steps ✅ (observed). Spectrum's third byte (`0x28`) is stored but ignored: values `0x01`, `0x28` and `0xFF` cycled at the same rate ✅ (observed). Its color list is ignored too: a 4-color white/red/white/red payload was accepted but still showed the full rainbow ✅ (observed). Spectrum is a fixed hue cycle. The firmware stores effect payloads verbatim, including out-of-range directions and extra trailing bytes, so readback can't show which bytes an effect actually uses ✅.
+
+The factory look is spectrum on all three zones at brightness `179` (70%). A per-zone wave can't reproduce Synapse's smooth wave; see below.
+
+Breathing (`02`) and reactive (`05`) writes return status `0x05` (not supported) on the wired V3 ✅, consistent with OpenSnek's off/static/spectrum/wave list for this family.
 
 Real read from the test unit (slot 0, scroll wheel): `00 01 03 01 28 01 ff ff ff`. That's spectrum, with a white placeholder color that spectrum ignores. ✅
+
+## Synapse device package
+
+The Synapse 3 installer for this mouse (`Razer_153_0_Setup`, device codename "Daria") contains factory defaults and lighting metadata. Its data files were extracted with 7-Zip, without running anything.
+
+**Factory defaults** (`Defaults/153/*.xml`):
+
+| Setting | Default | Matches test unit |
+|---|---|---|
+| LED brightness | 70% | `179` ✅ |
+| DPI stages | 400 / 800 / 1600 / 3200 / 6400, active index 2 (1600) | Unassigned banks report active stage 3 ✅ |
+| Poll rate | 1000 Hz | ✅ |
+| Sleep timeout | 300 s | not read |
+| Scroll wheel | Notched, no acceleration, no smart reel | not read |
+
+**LED layout** (`LedLayout/PID0099/PID0099_EID00_00.dat`): 3 zones with 11 LEDs in total. Zone `0x01` (scroll wheel) has 1 LED, `0x04` (logo) has 1, and `0x0A` (underglow) has 9. This matches the manual's "11 Razer Chroma lighting zones".
+
+**Effects Synapse offers** (`DeviceInstance.json`): static, breathing, spectrum, reactive, audiometer, starlight, fire, wave. Only off, static, spectrum and wave are accepted as onboard effects, so the rest must be rendered by Synapse on the PC while it runs.
+
+**Synapse wave** (`QuickEffectsData.xml`): speed `25`, **width** `100`, circular direction (clock / anticlock). The onboard wave payload has no width byte, so Synapse's wave is most likely software-rendered across the 11 LEDs. Reproducing it means streaming per-LED frames.
 
 ## Gotchas
 

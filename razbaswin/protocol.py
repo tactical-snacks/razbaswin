@@ -151,13 +151,16 @@ def parse_dpi_stages(r: Response) -> DpiStages:
 
 # --- Lighting --------------------------------------------------------------------
 
-VARSTORE = 0x01
+# Slot byte: 0 = live state of the active profile (lost on replug), 1-5 = profile banks.
+SLOT_LIVE = 0x00
 
 LED_ZONES = {
     0x01: "Scroll wheel",
     0x04: "Logo",
     0x0A: "Underglow",
 }
+
+ZONE_IDS = {"scroll": 0x01, "logo": 0x04, "underglow": 0x0A}
 
 EFFECT_OFF = 0x00
 EFFECT_STATIC = 0x01
@@ -225,3 +228,41 @@ def parse_led_effect(r: Response) -> LedEffect:
 def parse_led_brightness(r: Response) -> int:
     # 0x0F:0x84 -> [storage, led, brightness 0-255]
     return r.raw[10]
+
+
+WAVE_DEFAULT_SPEED = 0x28
+
+Color = tuple[int, int, int]
+
+# Breathing and reactive return status 0x05 (not supported) on the Basilisk V3,
+# matching OpenSnek's effect list for this family.
+WRITABLE_EFFECTS = ["off", "static", "spectrum", "wave"]
+
+
+def effect_payload(
+    effect: str,
+    colors: list[Color] = (),
+    speed: int | None = None,
+    direction: int = 1,
+) -> bytes:
+    """Effect bytes that follow [slot, led] in a 0x0F:0x02 write (payload families from OpenSnek)."""
+
+    def need(n: int) -> None:
+        if len(colors) != n:
+            raise ValueError(f"{effect} takes {n} color(s), got {len(colors)}")
+
+    if effect == "off":
+        need(0)
+        return bytes([EFFECT_OFF, 0, 0, 0])
+    if effect == "static":
+        need(1)
+        return bytes([EFFECT_STATIC, 0, 0, 1, *colors[0]])
+    if effect == "spectrum":
+        # Factory payload read from a new mouse. The speed byte is stored but the
+        # cycle rate doesn't change, so it's fixed here.
+        need(0)
+        return bytes([EFFECT_SPECTRUM, 1, 0x28, 1, 0xFF, 0xFF, 0xFF])
+    if effect == "wave":
+        need(0)
+        return bytes([EFFECT_WAVE, direction, WAVE_DEFAULT_SPEED if speed is None else speed, 0])
+    raise ValueError(f"unknown effect {effect!r}")

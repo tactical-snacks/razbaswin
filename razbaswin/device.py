@@ -123,9 +123,22 @@ class BasiliskV3:
     def dpi_stages(self) -> protocol.DpiStages:
         return protocol.parse_dpi_stages(self.transact(0x04, 0x86, 0x26, b"\x00"))
 
-    def led_effect(self, led_id: int, storage: int = protocol.VARSTORE) -> protocol.LedEffect:
+    def active_profile(self) -> int:
+        # 0x05:0x84 reports size 0 but still carries the profile ID in args[0]
+        return self.transact(0x05, 0x84, 0x00).raw[8]
+
+    def led_effect(self, led_id: int, storage: int = protocol.SLOT_LIVE) -> protocol.LedEffect:
         args = bytes([storage, led_id]) + bytes(10)
         return protocol.parse_led_effect(self.transact(0x0F, 0x82, 0x0C, args))
 
-    def led_brightness(self, led_id: int, storage: int = protocol.VARSTORE) -> int:
+    def led_brightness(self, led_id: int, storage: int = protocol.SLOT_LIVE) -> int:
         return protocol.parse_led_brightness(self.transact(0x0F, 0x84, 0x03, bytes([storage, led_id, 0x00])))
+
+    # --- Writes ----------------------------------------------------------------
+
+    def set_led_brightness(self, led_id: int, value: int, storage: int) -> None:
+        self.transact(0x0F, 0x04, 0x03, bytes([storage, led_id, value]))
+
+    def set_led_effect(self, led_id: int, payload: bytes, storage: int) -> None:
+        args = bytes([storage, led_id]) + payload
+        self.transact(0x0F, 0x02, len(args), args)

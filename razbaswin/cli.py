@@ -3,7 +3,7 @@ import sys
 
 from . import __version__
 from .device import BASILISK_V3_PID, BasiliskV3, DeviceError, enumerate_devices
-from .protocol import LED_ZONES
+from .protocol import LED_ZONES, SLOT_LIVE, WRITABLE_EFFECTS, ZONE_IDS, effect_payload
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -39,17 +39,108 @@ def cmd_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def print_leds(mouse: BasiliskV3, slot: int, zones: list[int], raw: bool = False) -> None:
+    label = "live" if slot == SLOT_LIVE else f"profile {slot}"
+    print(f"LED zones ({label})")
+    for led_id in zones:
+        effect = mouse.led_effect(led_id, slot)
+        brightness = mouse.led_brightness(led_id, slot)
+        percent = round(brightness * 100 / 255)
+        print(f"  {LED_ZONES[led_id]:<13} [{led_id:#04x}]  {effect.describe():<28} brightness {brightness} ({percent}%)")
+        if raw:
+            print(f"      raw: {effect.payload.hex(' ')}")
+
+
 def cmd_leds(args: argparse.Namespace) -> int:
     with BasiliskV3(args.pid) as mouse:
-        print("LED zones")
-        for led_id, zone in LED_ZONES.items():
-            effect = mouse.led_effect(led_id)
-            brightness = mouse.led_brightness(led_id)
-            percent = round(brightness * 100 / 255)
-            print(f"  {zone:<13} [{led_id:#04x}]  {effect.describe():<28} brightness {brightness} ({percent}%)")
-            if args.raw:
-                print(f"      raw: {effect.payload.hex(' ')}")
+        print_leds(mouse, args.slot, list(LED_ZONES), args.raw)
     return 0
+
+
+def resolve_write_slot(mouse: BasiliskV3, args: argparse.Namespace) -> int:
+    if args.temp:
+        print("Writing live state only (reverts on replug).")
+        return SLOT_LIVE
+    if args.profile is not None:
+        print(f"Writing profile {args.profile}.")
+        return args.profile
+    active = mouse.active_profile()
+    print(f"Writing active profile {active} (saved on the mouse).")
+    return active
+
+
+def selected_zones(args: argparse.Namespace) -> list[int]:
+    return list(LED_ZONES) if args.zone == "all" else [ZONE_IDS[args.zone]]
+
+
+def cmd_brightness(args: argparse.Namespace) -> int:
+    zones = selected_zones(args)
+    with BasiliskV3(args.pid) as mouse:
+        slot = resolve_write_slot(mouse, args)
+        for led_id in zones:
+            mouse.set_led_brightness(led_id, args.value, slot)
+        print_leds(mouse, SLOT_LIVE, zones)
+    return 0
+
+
+def cmd_effect(args: argparse.Namespace) -> int:
+    if args.effect != "wave" and args.speed is not None:
+        print("error: --speed only applies to wave", file=sys.stderr)
+        return 2
+    try:
+        payload = effect_payload(args.effect, args.colors, args.speed, args.direction)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    zones = selected_zones(args)
+    with BasiliskV3(args.pid) as mouse:
+        slot = resolve_write_slot(mouse, args)
+        for led_id in zones:
+            mouse.set_led_effect(led_id, payload, slot)
+        print_leds(mouse, SLOT_LIVE, zones)
+    return 0
+
+
+def brightness_value(s: str) -> int:
+    """'70%' -> 0-100 percent of 255; '179' -> raw 0-255."""
+    try:
+        value = round(float(s[:-1]) * 255 / 100) if s.endswith("%") else int(s, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid brightness {s!r}")
+    if not 0 <= value <= 255:
+        raise argparse.ArgumentTypeError("brightness must be 0-255 or 0%-100%")
+    return value
+
+
+def color(s: str) -> tuple[int, int, int]:
+    h = s.removeprefix("#")
+    if len(h) != 6:
+        raise argparse.ArgumentTypeError(f"invalid color {s!r}, expected RRGGBB")
+    try:
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid color {s!r}, expected RRGGBB")
+
+
+def slot_number(s: str) -> int:
+    value = int(s, 0)
+    if not 0 <= value <= 5:
+        raise argparse.ArgumentTypeError("slot must be 0-5")
+    return value
+
+
+def profile_number(s: str) -> int:
+    value = int(s, 0)
+    if not 1 <= value <= 5:
+        raise argparse.ArgumentTypeError("profile must be 1-5")
+    return value
+
+
+def add_write_options(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--zone", choices=[*ZONE_IDS, "all"], default="all", help="LED zone (default all)")
+    target = p.add_mutually_exclusive_group()
+    target.add_argument("--temp", action="store_true", help="Change live state only; reverts on replug")
+    target.add_argument("--profile", type=profile_number, help="Write this profile bank (default: active profile)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,8 +158,26 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("info", help="Read firmware, serial, poll rate and DPI").set_defaults(func=cmd_info)
 
     leds = sub.add_parser("leds", help="Read effect and brightness for each LED zone")
+    leds.add_argument("--slot", type=slot_number, default=SLOT_LIVE, help="0 = live (default), 1-5 = profile bank")
     leds.add_argument("--raw", action="store_true", help="Also print the raw effect payload bytes")
     leds.set_defaults(func=cmd_leds)
+
+    brightness = sub.add_parser("brightness", help="Set LED brightness")
+    brightness.add_argument("value", type=brightness_value, help="0-255, or a percentage like 70%%")
+    add_write_options(brightness)
+    brightness.set_defaults(func=cmd_brightness)
+
+    effect = sub.add_parser(
+        "effect",
+        help="Set LED effect",
+        description="static takes one RRGGBB hex color; off, spectrum and wave take none.",
+    )
+    effect.add_argument("effect", choices=WRITABLE_EFFECTS)
+    effect.add_argument("colors", nargs="*", type=color, metavar="COLOR")
+    effect.add_argument("--speed", type=int, help="wave only: speed 1-255, lower is faster (default 40)")
+    effect.add_argument("--direction", type=int, choices=[1, 2], default=1, help="wave direction")
+    add_write_options(effect)
+    effect.set_defaults(func=cmd_effect)
     return parser
 
 
