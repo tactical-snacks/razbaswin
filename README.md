@@ -1,6 +1,6 @@
 # razbaswin
 
-Open source CLI to control Razer Basilisk V3 featuers on Windows. Uses protocols from [OpenSnek](https://github.com/gh123man/OpenSnek)
+Open source CLI to control Razer Basilisk V3 features on Windows. Uses protocols from [OpenSnek](https://github.com/gh123man/OpenSnek)
 
 ## Install
 
@@ -15,6 +15,7 @@ Requires Python 3.10+ and [`hidapi`](https://pypi.org/project/hidapi/). No Razer
 ```sh
 razbaswin list   # show the mouse's HID interfaces
 razbaswin info   # read firmware, serial, poll rate and DPI stages
+razbaswin leds   # read effect and brightness for each LED zone (--raw for bytes)
 ```
 
 You can also run it without installing: `python -m razbaswin info`.
@@ -22,7 +23,7 @@ You can also run it without installing: `python -m razbaswin info`.
 ## TODO
 
 - [x] Hello world: read device info (firmware, serial, poll rate, DPI)
-- [ ] Read LEDs
+- [x] Read LEDs
 - [ ] Write LEDs
 - [ ] Read profiles
 - [ ] Back up profiles
@@ -40,6 +41,10 @@ Commands are 90-byte HID feature reports (report ID 0, transaction ID `0x1F`, XO
 | Poll rate      | `0x00:0x85` |
 | Current DPI    | `0x04:0x85` |
 | DPI stages     | `0x04:0x86` |
+| LED effect     | `0x0F:0x82` |
+| LED brightness | `0x0F:0x84` |
+
+LED zones: scroll wheel `0x01`, logo `0x04`, underglow `0x0A`.
 
 ## AI disclosure
 

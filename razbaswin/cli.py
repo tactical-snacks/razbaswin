@@ -3,6 +3,7 @@ import sys
 
 from . import __version__
 from .device import BASILISK_V3_PID, BasiliskV3, DeviceError, enumerate_devices
+from .protocol import LED_ZONES
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -38,6 +39,19 @@ def cmd_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_leds(args: argparse.Namespace) -> int:
+    with BasiliskV3(args.pid) as mouse:
+        print("LED zones")
+        for led_id, zone in LED_ZONES.items():
+            effect = mouse.led_effect(led_id)
+            brightness = mouse.led_brightness(led_id)
+            percent = round(brightness * 100 / 255)
+            print(f"  {zone:<13} [{led_id:#04x}]  {effect.describe():<28} brightness {brightness} ({percent}%)")
+            if args.raw:
+                print(f"      raw: {effect.payload.hex(' ')}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="razbaswin", description="Control a Razer Basilisk V3 over USB.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -51,6 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("list", help="List matching HID interfaces").set_defaults(func=cmd_list)
     sub.add_parser("info", help="Read firmware, serial, poll rate and DPI").set_defaults(func=cmd_info)
+
+    leds = sub.add_parser("leds", help="Read effect and brightness for each LED zone")
+    leds.add_argument("--raw", action="store_true", help="Also print the raw effect payload bytes")
+    leds.set_defaults(func=cmd_leds)
     return parser
 
 

@@ -122,3 +122,10 @@ class BasiliskV3:
 
     def dpi_stages(self) -> protocol.DpiStages:
         return protocol.parse_dpi_stages(self.transact(0x04, 0x86, 0x26, b"\x00"))
+
+    def led_effect(self, led_id: int, storage: int = protocol.VARSTORE) -> protocol.LedEffect:
+        args = bytes([storage, led_id]) + bytes(10)
+        return protocol.parse_led_effect(self.transact(0x0F, 0x82, 0x0C, args))
+
+    def led_brightness(self, led_id: int, storage: int = protocol.VARSTORE) -> int:
+        return protocol.parse_led_brightness(self.transact(0x0F, 0x84, 0x03, bytes([storage, led_id, 0x00])))

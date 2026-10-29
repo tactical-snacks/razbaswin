@@ -147,3 +147,81 @@ def parse_dpi_stages(r: Response) -> DpiStages:
     else:
         active = max(0, min(len(stages) - 1, active_id - 1))
     return DpiStages(active_index=active, stages=stages, stage_ids=ids)
+
+
+# --- Lighting --------------------------------------------------------------------
+
+VARSTORE = 0x01
+
+LED_ZONES = {
+    0x01: "Scroll wheel",
+    0x04: "Logo",
+    0x0A: "Underglow",
+}
+
+EFFECT_OFF = 0x00
+EFFECT_STATIC = 0x01
+EFFECT_BREATHING = 0x02
+EFFECT_SPECTRUM = 0x03
+EFFECT_WAVE = 0x04
+EFFECT_REACTIVE = 0x05
+
+EFFECT_NAMES = {
+    EFFECT_OFF: "off",
+    EFFECT_STATIC: "static",
+    EFFECT_BREATHING: "breathing",
+    EFFECT_SPECTRUM: "spectrum",
+    EFFECT_WAVE: "wave",
+    EFFECT_REACTIVE: "reactive",
+}
+
+BREATHING_MODES = {0x00: "random", 0x01: "single", 0x02: "dual"}
+
+# Effects whose color bytes are meaningful; spectrum/wave report a placeholder.
+COLOR_EFFECTS = {EFFECT_STATIC, EFFECT_BREATHING, EFFECT_REACTIVE}
+
+
+@dataclass(frozen=True)
+class LedEffect:
+    led_id: int
+    effect_id: int
+    param: int
+    speed: int
+    colors: list[tuple[int, int, int]]
+    payload: bytes
+
+    @property
+    def name(self) -> str:
+        return EFFECT_NAMES.get(self.effect_id, f"unknown ({self.effect_id:#04x})")
+
+    def describe(self) -> str:
+        parts = [self.name]
+        if self.effect_id == EFFECT_BREATHING:
+            parts.append(BREATHING_MODES.get(self.param, f"mode {self.param:#04x}"))
+        elif self.effect_id == EFFECT_WAVE:
+            parts.append(f"direction {self.param}, speed {self.speed}")
+        elif self.effect_id == EFFECT_REACTIVE:
+            parts.append(f"speed {self.speed}")
+        if self.effect_id in COLOR_EFFECTS or self.effect_id not in EFFECT_NAMES:
+            parts.extend(f"#{r:02x}{g:02x}{b:02x}" for r, g, b in self.colors)
+        return " ".join(parts)
+
+
+def parse_led_effect(r: Response) -> LedEffect:
+    # 0x0F:0x82 -> [storage, led, effect, param, speed, color count, R, G, B, ...]
+    payload = r.raw[8 : 8 + r.size]
+    count = payload[5] if len(payload) > 5 else 0
+    colors = [tuple(payload[6 + i * 3 : 9 + i * 3]) for i in range(count) if 9 + i * 3 <= len(payload)]
+    return LedEffect(
+        led_id=payload[1],
+        effect_id=payload[2],
+        param=payload[3],
+        speed=payload[4],
+        colors=colors,
+        payload=bytes(payload),
+    )
+
+
+def parse_led_brightness(r: Response) -> int:
+    # 0x0F:0x84 -> [storage, led, brightness 0-255]
+    return r.raw[10]
