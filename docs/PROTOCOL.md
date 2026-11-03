@@ -14,7 +14,7 @@ In effect, a register file behind an RPC: no memory-mapped access, only typed ge
 
 ```
             ┌──────────────────────────── device-global ────────────────────────────┐
-            │ poll rate · sleep timeout · low-battery threshold · device mode       │
+            │ poll rate · sleep timeout · device mode                               │
             │ serial · firmware                    (no slot byte, not in profiles)  │
             └───────────────────────────────────────────────────────────────────────┘
 
@@ -24,7 +24,7 @@ In effect, a register file behind an RPC: no memory-mapped access, only typed ge
     │
  slot 1  ── base profile bank   ┐
  slot 2  ── profile bank        │  persistent; each bank holds:
- slot 3  ── profile bank        │   name/UUID/owner · DPI + DPI stages · button bindings
+ slot 3  ── profile bank        │   DPI + DPI stages · button bindings
  slot 4  ── profile bank        │   · per-zone LED effect + brightness · scroll settings
  slot 5  ── profile bank        ┘
 
@@ -39,7 +39,7 @@ Every profile-scoped command takes a **slot byte as its first argument**. That o
 | `1` | Base profile bank. Normally the active one. |
 | `2`–`5` | Stored profile banks. |
 
-Current state of the test unit: max profile ID 5, assigned = `[1]`, active = `1`. Banks 2–5 still answer reads, with what look like factory defaults. ✅
+Out of the box, the test unit had max profile ID 5, assigned = `[1]`, active = `1`. Banks 2–5 still answered reads, holding factory defaults. ✅
 
 Slot 0 test (scroll-wheel brightness): writing `64` to slot 0 left bank 1 at `179`. After a USB replug, slot 0 read `179` again, reloaded from the active bank. ✅
 
@@ -48,12 +48,13 @@ Slot 0 test (scroll-wheel brightness): writing `64` to slot 0 left bank 1 at `17
 | Setting | Where it lives |
 |---|---|
 | DPI (current) and DPI stage table | Per bank, mirrored in slot 0 ✅ |
-| LED effect and brightness, per zone | Per bank, mirrored in slot 0 ✅ (reads) |
-| Button bindings | Per bank, mirrored in slot 0 ✅ (reads) |
+| LED effect and brightness, per zone | Per bank, mirrored in slot 0 ✅ |
+| Button bindings | Per bank, mirrored in slot 0 ✅ |
 | Hypershift layer | Unclear: reads return the normal-layer blocks ⚠️ |
-| Scroll mode, acceleration, smart reel | Per bank ✅ (reads) |
+| Scroll mode, acceleration, smart reel | Per bank, mirrored in slot 0 ✅ |
 | Profile name / UUID / owner (250-byte metadata) | Per bank on the V3 Pro. On the test V3, `05:88` returns status `0x03` for every slot ✅ |
-| Poll rate, sleep timeout, device mode | **Global**, not part of any profile ⚠️ |
+| Poll rate | **Global**, no slot byte ✅ |
+| Sleep timeout, device mode | **Global** ⚠️ |
 | Per-LED custom frames (underglow animation) | **Neither.** A RAM frame buffer that's lost on restart ⚠️ |
 | Macros, Synapse "cloud" profiles | Not mapped. Synapse keeps most of its profiles on the PC, and only the onboard ones live here. |
 
@@ -61,15 +62,15 @@ So **profiles don't cover everything.** Poll rate in particular sits outside the
 
 ## What a write actually touches
 
-A write changes **exactly one setting, in one bank, for one zone or button**. There's no "write whole profile" command and no transaction. A profile is a set of independent registers, and backup or restore means reading or writing each one in turn. ⚠️
+A write changes **exactly one setting, in one bank, for one zone or button**. There's no "write whole profile" command and no transaction. A profile is a set of independent registers, and backup or restore means reading or writing each one in turn ✅.
 
 **Writing just the LEDs:**
 
 | Write target | Effect |
 |---|---|
-| Slot `0` | Visible immediately. No bank changes. Reverts to the active bank on replug ✅. Sleep/wake and profile switch assumed to revert too ⚠️. |
+| Slot `0` | Visible immediately. No bank changes. Reverts to the active bank on replug and on profile switch ✅. Sleep/wake assumed to revert too ⚠️. |
 | The **active** bank (usually `1`) | Persists, and slot 0 picks up the new value immediately ✅. This holds for every profile register: DPI, stages, lighting, scroll and buttons ✅. Only the written register syncs: a bank brightness write leaves a temporary slot-0 effect in place ✅. Other settings in the bank are untouched ✅. |
-| An **inactive** bank (e.g. `2`) | Persists in that bank only. Nothing visible changes until that profile is selected with `05:04`. On the V3 Pro, selecting it then made slot 0 show the new colors. ⚠️ |
+| An **inactive** bank (e.g. `2`) | Persists in that bank only. Nothing visible changes until that profile is selected (`05:04` or the profile button), which reloads slot 0 from it ✅. |
 | Custom frame (`0x0F:0x03`) | Switches the addressed LEDs to a "custom" effect, fed from a per-LED buffer. OpenSnek uses 14 cells on the V3 Pro. The wired V3 has 11 LEDs (see below), so its cell count likely differs. Never persisted: after a restart the bank's stored effect comes back. ⚠️ |
 
 So an LED write **won't corrupt other profile data**. Two common surprises:
@@ -120,7 +121,7 @@ A profile snapshot is assembled from separate reads, each taking the slot as its
 | Scroll acceleration / smart reel | `02:96` / `02:97` | `<slot> <00/01>` |
 | Button binding | `02:8C` (size `0A`) | `<slot> <button> <layer> <7-byte function block>` |
 
-Profile-level reads: `05:81` returns `<max ID> <assigned IDs…>` (test unit: `05 01`), and `05:84` returns the active ID.
+Profile-level reads: `05:81` returns `<max ID> <assigned IDs…>` (out of the box: `05 01`), and `05:84` returns the active ID.
 
 Each register has a write counterpart that takes the same arguments as the read reply: `04:05`, `04:06`, `0F:02`, `0F:04`, `02:14`, `02:16`, `02:17`, `02:0C`, plus the global `00:05` (poll rate). On the test unit, every one of these wrote and read back exactly in all slots 0–5, **including unassigned banks 2–5** ✅. That covered independent X/Y stages, all 13 buttons except the profile button (`6A`, not tested: OpenSnek saw unstable repeated writes) and the scroll mode button (`0E`), which is remappable here ✅.
 
@@ -162,7 +163,8 @@ The Synapse 3 installer for this mouse (`Razer_153_0_Setup`, device codename "Da
 | DPI stages | 400 / 800 / 1600 / 3200 / 6400, active index 2 (1600) | Unassigned banks report active stage 3 ✅ |
 | Poll rate | 1000 Hz | ✅ |
 | Sleep timeout | 300 s | not read |
-| Scroll wheel | Notched, no acceleration, no smart reel | not read |
+| Scroll wheel | Notched, no acceleration, no smart reel | tactile (`00`), off, off ✅ |
+| Buttons | Stock mapping, wheel tilt turbo 50/s, clutch 400 DPI | ✅ (see Button slots) |
 
 **LED layout** (`LedLayout/PID0099/PID0099_EID00_00.dat`): 3 zones with 11 LEDs in total. Zone `0x01` (scroll wheel) has 1 LED, `0x04` (logo) has 1, and `0x0A` (underglow) has 9. This matches the manual's "11 Razer Chroma lighting zones".
 
@@ -174,6 +176,6 @@ The Synapse 3 installer for this mouse (`Razer_153_0_Setup`, device codename "Da
 
 - **The effect reply's slot byte always reads `00`**, whatever slot was requested, so replies must be matched to requests by the caller. The brightness reply does echo the slot. ✅
 - **Readable doesn't mean assigned.** All banks 0–5 answer reads and accept writes, but only banks listed by `05:81` are real, selectable profiles. Selecting an unassigned bank returns status `0x03`. ✅ (reads, writes) ⚠️ (select)
-- **Deleting a profile (`05:03`) only unassigns it.** Its data stays readable and is reused if the bank is recreated. ⚠️
+- **Deleting a profile (`05:03`) only unassigns it.** Its data stays readable ✅. Re-creating the profile resets at least its brightness, so write the full content after `05:02` ✅.
 - **`0x01` is overloaded.** Other Razer tools (OpenRazer) call `0x01` "VARSTORE / save to device". On this family it is simply bank 1, which is only "the live one" while profile 1 is active.
 - **Write order for DPI:** write the stage table before the current-DPI value, because a stage write can re-project the current DPI. ⚠️
