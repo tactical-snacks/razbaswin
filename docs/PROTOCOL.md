@@ -68,7 +68,7 @@ A write changes **exactly one setting, in one bank, for one zone or button**. Th
 | Write target | Effect |
 |---|---|
 | Slot `0` | Visible immediately. No bank changes. Reverts to the active bank on replug ✅. Sleep/wake and profile switch assumed to revert too ⚠️. |
-| The **active** bank (usually `1`) | Persists, and slot 0 picks up the new value immediately ✅. Only the written register syncs: a bank brightness write leaves a temporary slot-0 effect in place ✅. Other settings in the bank (DPI, buttons) are untouched ⚠️. |
+| The **active** bank (usually `1`) | Persists, and slot 0 picks up the new value immediately ✅. This holds for every profile register: DPI, stages, lighting, scroll and buttons ✅. Only the written register syncs: a bank brightness write leaves a temporary slot-0 effect in place ✅. Other settings in the bank are untouched ✅. |
 | An **inactive** bank (e.g. `2`) | Persists in that bank only. Nothing visible changes until that profile is selected with `05:04`. On the V3 Pro, selecting it then made slot 0 show the new colors. ⚠️ |
 | Custom frame (`0x0F:0x03`) | Switches the addressed LEDs to a "custom" effect, fed from a per-LED buffer. OpenSnek uses 14 cells on the V3 Pro. The wired V3 has 11 LEDs (see below), so its cell count likely differs. Never persisted: after a restart the bank's stored effect comes back. ⚠️ |
 
@@ -122,6 +122,8 @@ A profile snapshot is assembled from separate reads, each taking the slot as its
 
 Profile-level reads: `05:81` returns `<max ID> <assigned IDs…>` (test unit: `05 01`), and `05:84` returns the active ID.
 
+Each register has a write counterpart that takes the same arguments as the read reply: `04:05`, `04:06`, `0F:02`, `0F:04`, `02:14`, `02:16`, `02:17`, `02:0C`, plus the global `00:05` (poll rate). On the test unit, every one of these wrote and read back exactly in all slots 0–5, **including unassigned banks 2–5** ✅. That covered independent X/Y stages, all 13 buttons except the profile button (`6A`, not tested: OpenSnek saw unstable repeated writes) and the scroll mode button (`0E`), which is remappable here ✅.
+
 ### Button slots
 
 All 13 slots read back on the test unit, with Synapse's factory mapping ✅:
@@ -161,7 +163,7 @@ The Synapse 3 installer for this mouse (`Razer_153_0_Setup`, device codename "Da
 ## Gotchas
 
 - **The effect reply's slot byte always reads `00`**, whatever slot was requested, so replies must be matched to requests by the caller. The brightness reply does echo the slot. ✅
-- **Readable doesn't mean assigned.** All banks 0–5 answer reads, but only banks listed by `05:81` are real, selectable profiles. Selecting an unassigned bank returns status `0x03`. ✅ (reads) ⚠️ (select)
+- **Readable doesn't mean assigned.** All banks 0–5 answer reads and accept writes, but only banks listed by `05:81` are real, selectable profiles. Selecting an unassigned bank returns status `0x03`. ✅ (reads, writes) ⚠️ (select)
 - **Deleting a profile (`05:03`) only unassigns it.** Its data stays readable and is reused if the bank is recreated. ⚠️
 - **`0x01` is overloaded.** Other Razer tools (OpenRazer) call `0x01` "VARSTORE / save to device". On this family it is simply bank 1, which is only "the live one" while profile 1 is active.
 - **Write order for DPI:** write the stage table before the current-DPI value, because a stage write can re-project the current DPI. ⚠️

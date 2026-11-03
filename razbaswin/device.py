@@ -162,3 +162,29 @@ class BasiliskV3:
     def set_led_effect(self, led_id: int, payload: bytes, storage: int) -> None:
         args = bytes([storage, led_id]) + payload
         self.transact(0x0F, 0x02, len(args), args)
+
+    def set_dpi(self, x: int, y: int, storage: int) -> None:
+        self.transact(0x04, 0x05, 0x07, bytes([storage, x >> 8, x & 0xFF, y >> 8, y & 0xFF, 0, 0]))
+
+    def set_dpi_stages(self, stages: list[tuple[int, int]], stage_ids: list[int], active_index: int, storage: int) -> None:
+        # Rows: <id> <X be16> <Y be16> 00 00. The active stage is given by its ID token.
+        args = bytes([storage, stage_ids[active_index], len(stages)])
+        for stage_id, (x, y) in zip(stage_ids, stages):
+            args += bytes([stage_id, x >> 8, x & 0xFF, y >> 8, y & 0xFF, 0, 0])
+        self.transact(0x04, 0x06, 0x26, args)
+
+    def set_scroll_mode(self, mode: int, storage: int) -> None:
+        self.transact(0x02, 0x14, 0x02, bytes([storage, mode]))
+
+    def set_scroll_acceleration(self, enabled: bool, storage: int) -> None:
+        self.transact(0x02, 0x16, 0x02, bytes([storage, int(enabled)]))
+
+    def set_smart_reel(self, enabled: bool, storage: int) -> None:
+        self.transact(0x02, 0x17, 0x02, bytes([storage, int(enabled)]))
+
+    def set_button_block(self, button: int, block: bytes, storage: int, hypershift: int = 0) -> None:
+        self.transact(0x02, 0x0C, 0x0A, bytes([storage, button, hypershift]) + block)
+
+    def set_poll_rate(self, hz: int) -> None:
+        raw = {rate: code for code, rate in protocol.POLL_RATES.items()}[hz]
+        self.transact(0x00, 0x05, 0x01, bytes([raw]))

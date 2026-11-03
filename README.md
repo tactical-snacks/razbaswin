@@ -20,6 +20,11 @@ razbaswin leds --slot 2                          # read a stored profile bank in
 razbaswin profiles                               # list the 5 onboard profile slots
 razbaswin profile                                # DPI, lighting, scroll and buttons of the active profile
 razbaswin profile 2 --json                       # one slot (0 = live) as JSON; --raw shows button bytes
+razbaswin backup [FILE]                          # save all slots + global settings to JSON
+
+razbaswin reset                                  # preview what a factory reset would change
+razbaswin reset --yes                            # apply it (saves a backup first)
+razbaswin reset --slot 5 --yes                   # reset one slot only (0 = live); leaves poll rate alone
 
 razbaswin brightness 50%                         # all zones, saved to the active profile
 razbaswin effect static ff0000 --zone logo       # off | static RRGGBB | spectrum | wave
@@ -38,8 +43,8 @@ You can also run it without installing: `python -m razbaswin info`.
 - [x] Read LEDs
 - [x] Write LEDs
 - [x] Read profiles
-- [ ] Back up profiles
-- [ ] Reset to factory defaults
+- [x] Back up profiles
+- [x] Reset to factory defaults
 - [ ] Write profiles
 - [ ] UI (maybe)
 

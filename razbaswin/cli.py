@@ -1,10 +1,20 @@
 import argparse
 import json
 import sys
+from datetime import datetime
+from pathlib import Path
 
 from . import __version__
 from .device import BASILISK_V3_PID, BasiliskV3, DeviceError, enumerate_devices
-from .profiles import read_profile
+from .profiles import (
+    FACTORY_POLL_RATE,
+    FACTORY_PROFILE,
+    profile_diff,
+    read_backup,
+    read_profile,
+    reset_slot,
+    reset_slots,
+)
 from .protocol import (
     BUTTON_SLOTS,
     LED_ZONES,
@@ -126,6 +136,87 @@ def cmd_profile(args: argparse.Namespace) -> int:
     return 0
 
 
+def save_backup(mouse: BasiliskV3, file: str | None) -> Path:
+    data = read_backup(mouse)
+    path = Path(file or f"razbaswin-backup-{datetime.now():%Y%m%d-%H%M%S}.json")
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    p = data["profiles"]
+    print(f"Backed up slots 0-{p['max_id']} (assigned {p['assigned']}, active {p['active']}) to {path}")
+    return path
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    with BasiliskV3(args.pid) as mouse:
+        save_backup(mouse, args.file)
+    return 0
+
+
+def format_value(setting: str, value: object) -> str:
+    if setting == "dpi_stages":
+        stages = "/".join(str(x) if x == y else f"{x}x{y}" for x, y in value["stages"])
+        return f"{stages}, active {value['active_index'] + 1}"
+    if setting.startswith("buttons."):
+        return f"{describe_function_block(bytes.fromhex(value))} [{value}]"
+    if setting.endswith(".effect"):
+        return led_effect_from_payload(bytes(2) + bytes.fromhex(value)).describe()
+    return str(value)
+
+
+def print_diffs(diffs: list[tuple[str, object, object]]) -> None:
+    for setting, current, target in diffs:
+        print(f"    {setting}: {format_value(setting, current)} -> {format_value(setting, target)}")
+
+
+def cmd_reset(args: argparse.Namespace) -> int:
+    apply = args.yes
+    whole = args.slot is None
+    with BasiliskV3(args.pid) as mouse:
+        if apply and not args.no_backup:
+            save_backup(mouse, None)
+        print("Resetting to factory defaults" if apply else "Dry run: changes a factory reset would make")
+
+        slots = reset_slots(mouse) if whole else [args.slot]
+        changed = False
+        for slot in slots:
+            label = "Live state" if slot == SLOT_LIVE else f"Profile {slot}"
+            if whole and slot == SLOT_LIVE and not apply:
+                print(f"  {label}: re-checked after the profile writes (it follows the active profile)")
+                continue
+            diffs = reset_slot(mouse, slot, dry_run=not apply)
+            changed |= bool(diffs)
+            print(f"  {label}: {'already factory' if not diffs else f'{len(diffs)} setting(s)'}")
+            print_diffs(diffs)
+
+        if whole:
+            poll = mouse.poll_rate()
+            if poll != FACTORY_POLL_RATE:
+                changed = True
+                print(f"  Poll rate: {poll} -> {FACTORY_POLL_RATE} Hz")
+                if apply:
+                    mouse.set_poll_rate(FACTORY_POLL_RATE)
+            else:
+                print("  Poll rate: already factory")
+
+        if apply:
+            leftover = {slot: profile_diff(read_profile(mouse, slot), FACTORY_PROFILE) for slot in slots}
+            leftover = {slot: d for slot, d in leftover.items() if d}
+            if whole and mouse.poll_rate() != FACTORY_POLL_RATE:
+                print("Verify: poll rate did not change", file=sys.stderr)
+                return 1
+            if leftover:
+                for slot, diffs in leftover.items():
+                    print(f"Verify: slot {slot} still differs", file=sys.stderr)
+                    print_diffs(diffs)
+                return 1
+            print("Verified: all reset slots read back as factory.")
+
+    not_reset = "Hypershift layer, which profiles are assigned/active, sleep timeout, sensor calibration"
+    print(f"Not reset: {not_reset}." if whole else f"Not reset: other slots, poll rate, {not_reset}.")
+    if not apply and changed:
+        print("Re-run with --yes to apply (a backup is saved first).")
+    return 0
+
+
 def resolve_write_slot(mouse: BasiliskV3, args: argparse.Namespace) -> int:
     if args.temp:
         print("Writing live state only (reverts on replug).")
@@ -238,6 +329,20 @@ def build_parser() -> argparse.ArgumentParser:
     profile.add_argument("--raw", action="store_true", help="Also print raw button function blocks")
     profile.add_argument("--json", action="store_true", help="Print the snapshot as JSON")
     profile.set_defaults(func=cmd_profile)
+
+    backup = sub.add_parser("backup", help="Save all profile slots and global settings to a JSON file")
+    backup.add_argument("file", nargs="?", help="Output file (default razbaswin-backup-<timestamp>.json)")
+    backup.set_defaults(func=cmd_backup)
+
+    reset = sub.add_parser(
+        "reset",
+        help="Reset mapped settings to factory defaults",
+        description="Shows what would change unless --yes is given. Only settings that differ are written.",
+    )
+    reset.add_argument("--slot", type=slot_number, help="Reset only this slot (1-5, or 0 for live state)")
+    reset.add_argument("--yes", action="store_true", help="Apply the reset")
+    reset.add_argument("--no-backup", action="store_true", help="Skip the automatic backup before applying")
+    reset.set_defaults(func=cmd_reset)
 
     brightness = sub.add_parser("brightness", help="Set LED brightness")
     brightness.add_argument("value", type=brightness_value, help="0-255, or a percentage like 70%%")
