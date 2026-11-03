@@ -185,6 +185,23 @@ class BasiliskV3:
     def set_button_block(self, button: int, block: bytes, storage: int, hypershift: int = 0) -> None:
         self.transact(0x02, 0x0C, 0x0A, bytes([storage, button, hypershift]) + block)
 
+    def _profile_command(self, cmd_id: int, profile: int) -> None:
+        r = self.transact(0x05, cmd_id, 0x01, bytes([profile]))
+        if r.raw[8] != profile:
+            raise DeviceError(f"Profile command {cmd_id:#04x} echoed profile {r.raw[8]}, expected {profile}")
+
+    def create_profile(self, profile: int) -> None:
+        """Assign a bank as a profile (05:02). Resets at least part of the bank's content."""
+        self._profile_command(0x02, profile)
+
+    def delete_profile(self, profile: int) -> None:
+        """Unassign a profile (05:03). Its bank content stays readable."""
+        self._profile_command(0x03, profile)
+
+    def set_active_profile(self, profile: int) -> None:
+        """Select an assigned profile (05:04); live state reloads from its bank."""
+        self._profile_command(0x04, profile)
+
     def set_poll_rate(self, hz: int) -> None:
         raw = {rate: code for code, rate in protocol.POLL_RATES.items()}[hz]
         self.transact(0x00, 0x05, 0x01, bytes([raw]))

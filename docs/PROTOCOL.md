@@ -124,6 +124,16 @@ Profile-level reads: `05:81` returns `<max ID> <assigned IDs…>` (test unit: `0
 
 Each register has a write counterpart that takes the same arguments as the read reply: `04:05`, `04:06`, `0F:02`, `0F:04`, `02:14`, `02:16`, `02:17`, `02:0C`, plus the global `00:05` (poll rate). On the test unit, every one of these wrote and read back exactly in all slots 0–5, **including unassigned banks 2–5** ✅. That covered independent X/Y stages, all 13 buttons except the profile button (`6A`, not tested: OpenSnek saw unstable repeated writes) and the scroll mode button (`0E`), which is remappable here ✅.
 
+### Profile management
+
+| Command | Args | Effect on the test unit |
+|---|---|---|
+| `05:02` create | `<profile>` | Adds the bank to `05:81` ✅. **Resets at least the bank's LED brightness to factory** (128 → 179 observed), so write the profile's content after creating it ✅. |
+| `05:04` select | `<profile>` | Sets `05:84`. Live state (slot 0) reloads every register from that bank ✅. |
+| `05:03` delete | `<profile>` | Removes the bank from `05:81`. Its content stays readable ✅. |
+
+All three echo the profile ID in `args[0]`. Metadata (`05:88`/`05:08`) isn't needed: a profile created without it can be selected with `05:04`, and the physical profile button cycles to it ✅. Unlike the V3 Pro, which rejects selecting a profile with invalid metadata.
+
 ### Button slots
 
 All 13 slots read back on the test unit, with Synapse's factory mapping ✅:

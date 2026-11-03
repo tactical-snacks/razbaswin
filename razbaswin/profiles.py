@@ -5,6 +5,7 @@ registers addressed by slot (0 = live, 1-5 = profile banks). Snapshots keep raw
 values (stage IDs, effect bytes, button blocks) so they can be written back.
 """
 
+import json
 from datetime import datetime
 
 from . import __version__
@@ -81,6 +82,17 @@ def read_backup(mouse: BasiliskV3) -> dict:
         "profiles": {"max_id": max_id, "assigned": assigned, "active": mouse.active_profile()},
         "slots": {str(slot): read_profile(mouse, slot) for slot in range(0, max_id + 1)},
     }
+
+
+def load_backup(path: str) -> dict:
+    with open(path, encoding="utf-8") as f:
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError:
+            data = {}
+    if not isinstance(data, dict) or data.get("format") != "razbaswin-backup" or data.get("version") != 1:
+        raise ValueError(f"{path} is not a razbaswin backup (version 1)")
+    return data
 
 
 def effect_core(effect_hex: str) -> bytes:

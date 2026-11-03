@@ -21,6 +21,12 @@ razbaswin profiles                               # list the 5 onboard profile sl
 razbaswin profile                                # DPI, lighting, scroll and buttons of the active profile
 razbaswin profile 2 --json                       # one slot (0 = live) as JSON; --raw shows button bytes
 razbaswin backup [FILE]                          # save all slots + global settings to JSON
+razbaswin restore FILE                           # preview writing a backup back (--yes to apply)
+razbaswin restore FILE --slot 1 --to 3 --yes     # copy one backed-up slot into another slot
+
+razbaswin profiles --create 2 --from 1           # new profile 2, copied from profile 1 (default: factory)
+razbaswin profiles --activate 2                  # switch profile (same as the profile button)
+razbaswin profiles --delete 2                    # remove it from the profile button's cycle
 
 razbaswin reset                                  # preview what a factory reset would change
 razbaswin reset --yes                            # apply it (saves a backup first)
@@ -45,7 +51,7 @@ You can also run it without installing: `python -m razbaswin info`.
 - [x] Read profiles
 - [x] Back up profiles
 - [x] Reset to factory defaults
-- [ ] Write profiles
+- [x] Write profiles
 - [ ] UI (maybe)
 
 ## How it talks to the mouse

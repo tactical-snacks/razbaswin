@@ -9,11 +9,13 @@ from .device import BASILISK_V3_PID, BasiliskV3, DeviceError, enumerate_devices
 from .profiles import (
     FACTORY_POLL_RATE,
     FACTORY_PROFILE,
+    load_backup,
     profile_diff,
     read_backup,
     read_profile,
     reset_slot,
     reset_slots,
+    write_profile,
 )
 from .protocol import (
     BUTTON_SLOTS,
@@ -79,8 +81,63 @@ def cmd_leds(args: argparse.Namespace) -> int:
     return 0
 
 
+def change_profiles(mouse: BasiliskV3, args: argparse.Namespace) -> bool:
+    """Apply --create/--delete/--activate. Returns False (after printing why) if refused or unverified."""
+    _, assigned = mouse.profile_inventory()
+    active = mouse.active_profile()
+
+    if args.create is not None:
+        p = args.create
+        if p in assigned:
+            print(f"error: profile {p} already exists", file=sys.stderr)
+            return False
+        # Read the source first: creating resets part of the bank's content.
+        content = FACTORY_PROFILE if args.source is None else read_profile(mouse, args.source)
+        source = "factory defaults" if args.source is None else f"slot {args.source}"
+        mouse.create_profile(p)
+        write_profile(mouse, p, content)
+        if p not in mouse.profile_inventory()[1] or profile_diff(read_profile(mouse, p), content):
+            print(f"Verify: profile {p} was not created with {source}", file=sys.stderr)
+            return False
+        print(f"Created profile {p} from {source}.")
+
+    if args.delete is not None:
+        p = args.delete
+        if p not in assigned:
+            print(f"error: profile {p} doesn't exist", file=sys.stderr)
+            return False
+        if p == active:
+            print(f"error: profile {p} is active; switch first with --activate", file=sys.stderr)
+            return False
+        if len(assigned) == 1:
+            print(f"error: profile {p} is the only profile", file=sys.stderr)
+            return False
+        mouse.delete_profile(p)
+        if p in mouse.profile_inventory()[1]:
+            print(f"Verify: profile {p} is still listed", file=sys.stderr)
+            return False
+        print(f"Deleted profile {p} (its settings stay in the slot).")
+
+    if args.activate is not None:
+        p = args.activate
+        if p not in mouse.profile_inventory()[1]:
+            print(f"error: profile {p} doesn't exist", file=sys.stderr)
+            return False
+        mouse.set_active_profile(p)
+        if mouse.active_profile() != p:
+            print(f"Verify: active profile is {mouse.active_profile()}, not {p}", file=sys.stderr)
+            return False
+        print(f"Activated profile {p}.")
+    return True
+
+
 def cmd_profiles(args: argparse.Namespace) -> int:
+    if args.source is not None and args.create is None:
+        print("error: --from only applies with --create", file=sys.stderr)
+        return 2
     with BasiliskV3(args.pid) as mouse:
+        if not change_profiles(mouse, args):
+            return 1
         max_id, assigned = mouse.profile_inventory()
         active = mouse.active_profile()
         print(f"Onboard profiles (slots 1-{max_id})")
@@ -167,6 +224,104 @@ def print_diffs(diffs: list[tuple[str, object, object]]) -> None:
         print(f"    {setting}: {format_value(setting, current)} -> {format_value(setting, target)}")
 
 
+def verify_slots(mouse: BasiliskV3, targets: dict[int, dict]) -> bool:
+    """Re-read each slot and report any setting that doesn't match its target."""
+    ok = True
+    for slot, target in targets.items():
+        diffs = profile_diff(read_profile(mouse, slot), target)
+        if diffs:
+            ok = False
+            print(f"Verify: slot {slot} still differs", file=sys.stderr)
+            print_diffs(diffs)
+    if ok:
+        print("Verified: all written slots read back as expected.")
+    return ok
+
+
+def print_slot_diffs(slot: int, diffs: list[tuple[str, object, object]], same: str) -> None:
+    label = "Live state" if slot == SLOT_LIVE else f"Profile {slot}"
+    print(f"  {label}: {same if not diffs else f'{len(diffs)} setting(s)'}")
+    print_diffs(diffs)
+
+
+def cmd_restore(args: argparse.Namespace) -> int:
+    try:
+        backup = load_backup(args.file)
+    except (OSError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    apply = args.yes
+    with BasiliskV3(args.pid) as mouse:
+        if backup["device"]["pid"] != f"{mouse.pid:#06x}":
+            print(f"error: backup is from PID {backup['device']['pid']}, not {mouse.pid:#06x}", file=sys.stderr)
+            return 2
+        if apply and not args.no_backup:
+            save_backup(mouse, None)
+        print(f"Restoring {args.file}" if apply else f"Dry run: changes restoring {args.file} would make")
+        changed = False
+
+        if args.slot is not None:
+            dst = args.slot if args.to is None else args.to
+            targets = {dst: backup["slots"][str(args.slot)]}
+            if dst != args.slot:
+                print(f"  (backup slot {args.slot} -> mouse slot {dst})")
+            diffs = write_profile(mouse, dst, targets[dst], dry_run=not apply)
+            changed |= bool(diffs)
+            print_slot_diffs(dst, diffs, "already matches")
+        else:
+            # Order matters: create before writing (create resets bank content), select the
+            # active profile before writing live state (selecting reloads it), delete last.
+            max_id, assigned = mouse.profile_inventory()
+            want = backup["profiles"]["assigned"]
+            for p in (p for p in want if p not in assigned):
+                changed = True
+                print(f"  Create profile {p}")
+                if apply:
+                    mouse.create_profile(p)
+            targets = {slot: backup["slots"][str(slot)] for slot in range(1, max_id + 1)}
+            for slot, target in targets.items():
+                diffs = write_profile(mouse, slot, target, dry_run=not apply)
+                changed |= bool(diffs)
+                print_slot_diffs(slot, diffs, "already matches")
+            if mouse.active_profile() != backup["profiles"]["active"]:
+                changed = True
+                print(f"  Active profile: {mouse.active_profile()} -> {backup['profiles']['active']}")
+                if apply:
+                    mouse.set_active_profile(backup["profiles"]["active"])
+            if apply:
+                targets[SLOT_LIVE] = backup["slots"][str(SLOT_LIVE)]
+                diffs = write_profile(mouse, SLOT_LIVE, targets[SLOT_LIVE])
+                print_slot_diffs(SLOT_LIVE, diffs, "already matches")
+            else:
+                print("  Live state: re-checked after the profile writes (it follows the active profile)")
+            for p in (p for p in assigned if p not in want):
+                changed = True
+                print(f"  Delete profile {p} (not in the backup)")
+                if apply:
+                    mouse.delete_profile(p)
+            poll = backup["global"]["poll_rate"]
+            if mouse.poll_rate() != poll:
+                changed = True
+                print(f"  Poll rate: {mouse.poll_rate()} -> {poll} Hz")
+                if apply:
+                    mouse.set_poll_rate(poll)
+
+        if apply:
+            if args.slot is None and (
+                mouse.profile_inventory()[1] != backup["profiles"]["assigned"]
+                or mouse.active_profile() != backup["profiles"]["active"]
+                or mouse.poll_rate() != backup["global"]["poll_rate"]
+            ):
+                print("Verify: profile list, active profile or poll rate doesn't match the backup", file=sys.stderr)
+                return 1
+            if not verify_slots(mouse, targets):
+                return 1
+
+    if not apply and changed:
+        print("Re-run with --yes to apply (a backup of the current state is saved first).")
+    return 0
+
+
 def cmd_reset(args: argparse.Namespace) -> int:
     apply = args.yes
     whole = args.slot is None
@@ -198,17 +353,11 @@ def cmd_reset(args: argparse.Namespace) -> int:
                 print("  Poll rate: already factory")
 
         if apply:
-            leftover = {slot: profile_diff(read_profile(mouse, slot), FACTORY_PROFILE) for slot in slots}
-            leftover = {slot: d for slot, d in leftover.items() if d}
             if whole and mouse.poll_rate() != FACTORY_POLL_RATE:
                 print("Verify: poll rate did not change", file=sys.stderr)
                 return 1
-            if leftover:
-                for slot, diffs in leftover.items():
-                    print(f"Verify: slot {slot} still differs", file=sys.stderr)
-                    print_diffs(diffs)
+            if not verify_slots(mouse, {slot: FACTORY_PROFILE for slot in slots}):
                 return 1
-            print("Verified: all reset slots read back as factory.")
 
     not_reset = "Hypershift layer, which profiles are assigned/active, sleep timeout, sensor calibration"
     print(f"Not reset: {not_reset}." if whole else f"Not reset: other slots, poll rate, {not_reset}.")
@@ -322,7 +471,16 @@ def build_parser() -> argparse.ArgumentParser:
     leds.add_argument("--raw", action="store_true", help="Also print the raw effect payload bytes")
     leds.set_defaults(func=cmd_leds)
 
-    sub.add_parser("profiles", help="List onboard profile slots").set_defaults(func=cmd_profiles)
+    profiles = sub.add_parser(
+        "profiles",
+        help="List, create, delete or activate onboard profiles",
+        description="Lists the profile slots, after applying any --create/--delete/--activate.",
+    )
+    profiles.add_argument("--create", type=profile_number, metavar="N", help="Create profile N (factory settings)")
+    profiles.add_argument("--from", dest="source", type=slot_number, metavar="SLOT", help="With --create: copy settings from SLOT (0-5)")
+    profiles.add_argument("--delete", type=profile_number, metavar="N", help="Delete profile N (settings stay in the slot)")
+    profiles.add_argument("--activate", type=profile_number, metavar="N", help="Make profile N active")
+    profiles.set_defaults(func=cmd_profiles)
 
     profile = sub.add_parser("profile", help="Read everything stored in one profile")
     profile.add_argument("slot", nargs="?", type=slot_number, help="1-5, or 0 for live state (default: active profile)")
@@ -333,6 +491,19 @@ def build_parser() -> argparse.ArgumentParser:
     backup = sub.add_parser("backup", help="Save all profile slots and global settings to a JSON file")
     backup.add_argument("file", nargs="?", help="Output file (default razbaswin-backup-<timestamp>.json)")
     backup.set_defaults(func=cmd_backup)
+
+    restore = sub.add_parser(
+        "restore",
+        help="Write a backup file back to the mouse",
+        description="Shows what would change unless --yes is given. Only settings that differ are written. "
+        "A full restore also restores which profiles exist, the active profile and the poll rate.",
+    )
+    restore.add_argument("file", help="Backup file from 'razbaswin backup'")
+    restore.add_argument("--slot", type=slot_number, help="Restore only this slot from the backup (0-5)")
+    restore.add_argument("--to", type=slot_number, help="With --slot: write it into this mouse slot instead")
+    restore.add_argument("--yes", action="store_true", help="Apply the restore")
+    restore.add_argument("--no-backup", action="store_true", help="Skip the automatic backup before applying")
+    restore.set_defaults(func=cmd_restore)
 
     reset = sub.add_parser(
         "reset",
