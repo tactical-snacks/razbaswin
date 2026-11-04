@@ -47,6 +47,14 @@ Options for both commands:
 | `--profile N` | Write profile bank N. Only visible once profile N is active. |
 | `--zone Z` | `scroll`, `logo`, `underglow`, or `all` (default). |
 
+Effect changes crossfade slowly; that fade is built into the mouse. `--trans instant` skips it for `static` and `off` by painting the LEDs directly:
+
+```sh
+razbaswin effect static 0000ff --trans instant   # switches at once, live state only
+```
+
+An instant color can't be saved, so `--trans instant` implies `--temp` and can't be combined with `--profile`. While it's showing, `leds` reports the zone as `custom`. Spectrum and wave always fade in.
+
 ## Profiles
 
 ```sh

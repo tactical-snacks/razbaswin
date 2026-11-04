@@ -71,7 +71,7 @@ A write changes **exactly one setting, in one bank, for one zone or button**. Th
 | Slot `0` | Visible immediately. No bank changes. Reverts to the active bank on replug and on profile switch ✅. Sleep/wake assumed to revert too ⚠️. |
 | The **active** bank (usually `1`) | Persists, and slot 0 picks up the new value immediately ✅. This holds for every profile register: DPI, stages, lighting, scroll and buttons ✅. Only the written register syncs: a bank brightness write leaves a temporary slot-0 effect in place ✅. Other settings in the bank are untouched ✅. |
 | An **inactive** bank (e.g. `2`) | Persists in that bank only. Nothing visible changes until that profile is selected (`05:04` or the profile button), which reloads slot 0 from it ✅. |
-| Custom frame (`0x0F:0x03`) | Switches the addressed LEDs to a "custom" effect, fed from a per-LED buffer. OpenSnek uses 14 cells on the V3 Pro. The wired V3 has 11 LEDs (see below), so its cell count likely differs. Never persisted: after a restart the bank's stored effect comes back. ⚠️ |
+| Custom frame (`0x0F:0x03`) | Fills a per-LED frame buffer, shown by zones whose effect is custom (`08`). Never persisted: after a restart the bank's stored effect comes back ⚠️. See [Custom frames](#custom-frames). |
 
 So an LED write **won't corrupt other profile data**. Two common surprises:
 
@@ -107,6 +107,17 @@ The factory look is spectrum on all three zones at brightness `179` (70%). A per
 Breathing (`02`) and reactive (`05`) writes return status `0x05` (not supported) on the wired V3 ✅, consistent with OpenSnek's off/static/spectrum/wave list for this family.
 
 Real read from the test unit (slot 0, scroll wheel): `00 01 03 01 28 01 ff ff ff`. That's spectrum, with a white placeholder color that spectrum ignores. ✅
+
+### Custom frames
+
+Every `0F:02` effect write crossfades slowly from the old look to the new one, and no byte of the static payload changes that: speed `00` and `01` both fade ✅ (observed). Custom frames don't fade, so they're the way to change colors instantly ✅ (observed).
+
+| Command | Args |
+|---|---|
+| Frame | `0F:03`, `00 00 <row 00> <first cell> <last cell> <RGB>…`, size `5 + 3 × cells` |
+| Show frame | `0F:02` on slot `00`, `<zone> 08` plus 9 zero bytes |
+
+The wired V3's frame is one row of 11 cells: `0` logo, `1` scroll wheel, `2`–`10` underglow ✅ (observed). Writing a sub-range leaves the other cells alone ✅. Writes of 9 and 14 cells were also accepted, so the cell count can't be probed from status codes. A zone showing the frame reads back as effect `08` ✅. No frame read is known, so the colors can't be read back. Writing the frame before switching a zone to `08` avoids showing a stale buffer.
 
 ## Profile registers
 

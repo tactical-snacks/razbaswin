@@ -244,6 +244,7 @@ EFFECT_BREATHING = 0x02
 EFFECT_SPECTRUM = 0x03
 EFFECT_WAVE = 0x04
 EFFECT_REACTIVE = 0x05
+EFFECT_CUSTOM = 0x08  # zone shows the 0x0F:0x03 frame buffer; live state only
 
 EFFECT_NAMES = {
     EFFECT_OFF: "off",
@@ -252,6 +253,15 @@ EFFECT_NAMES = {
     EFFECT_SPECTRUM: "spectrum",
     EFFECT_WAVE: "wave",
     EFFECT_REACTIVE: "reactive",
+    EFFECT_CUSTOM: "custom",
+}
+
+# Custom frame cells (0x0F:0x03, one row of 11) covered by each zone, as (first, last).
+# Mapped on the test unit by painting cells and watching the LEDs.
+FRAME_CELLS = {
+    0x04: (0, 0),   # logo
+    0x01: (1, 1),   # scroll wheel
+    0x0A: (2, 10),  # underglow
 }
 
 BREATHING_MODES = {0x00: "random", 0x01: "single", 0x02: "dual"}

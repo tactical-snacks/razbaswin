@@ -19,6 +19,8 @@ from .profiles import (
 )
 from .protocol import (
     BUTTON_SLOTS,
+    EFFECT_CUSTOM,
+    FRAME_CELLS,
     LED_ZONES,
     SCROLL_MODES,
     SLOT_LIVE,
@@ -396,6 +398,13 @@ def cmd_effect(args: argparse.Namespace) -> int:
     if args.effect != "wave" and args.speed is not None:
         print("error: --speed only applies to wave", file=sys.stderr)
         return 2
+    instant = args.trans == "instant"
+    if instant and args.effect not in ("static", "off"):
+        print("error: --trans instant only applies to static and off", file=sys.stderr)
+        return 2
+    if instant and args.profile is not None:
+        print("error: --trans instant can't be saved to a profile; it changes the live state only", file=sys.stderr)
+        return 2
     try:
         payload = effect_payload(args.effect, args.colors, args.speed, args.direction)
     except ValueError as e:
@@ -403,11 +412,27 @@ def cmd_effect(args: argparse.Namespace) -> int:
         return 2
     zones = selected_zones(args)
     with BasiliskV3(args.pid) as mouse:
-        slot = resolve_write_slot(mouse, args)
-        for led_id in zones:
-            mouse.set_led_effect(led_id, payload, slot)
+        if instant:
+            print("Writing live state only (reverts on replug).")
+            rgb = args.colors[0] if args.effect == "static" else (0, 0, 0)
+            set_instant_color(mouse, zones, rgb)
+        else:
+            slot = resolve_write_slot(mouse, args)
+            for led_id in zones:
+                mouse.set_led_effect(led_id, payload, slot)
         print_leds(mouse, SLOT_LIVE, zones)
     return 0
+
+
+def set_instant_color(mouse: BasiliskV3, zones: list[int], rgb: tuple[int, int, int]) -> None:
+    """Effect writes crossfade; custom frame writes don't. Paint the zones' frame
+    cells, then switch any zone not already showing the frame to the custom effect."""
+    for led_id in zones:
+        first, last = FRAME_CELLS[led_id]
+        mouse.set_custom_frame(first, last, [rgb] * (last - first + 1))
+    for led_id in zones:
+        if mouse.led_effect(led_id, SLOT_LIVE).effect_id != EFFECT_CUSTOM:
+            mouse.set_led_effect(led_id, bytes([EFFECT_CUSTOM]) + bytes(9), SLOT_LIVE)
 
 
 def brightness_value(s: str) -> int:
@@ -529,6 +554,12 @@ def build_parser() -> argparse.ArgumentParser:
     effect.add_argument("colors", nargs="*", type=color, metavar="COLOR")
     effect.add_argument("--speed", type=int, help="wave only: speed 1-255, lower is faster (default 40)")
     effect.add_argument("--direction", type=int, choices=[1, 2], default=1, help="wave direction")
+    effect.add_argument(
+        "--trans",
+        choices=["slow", "instant"],
+        default="slow",
+        help="static/off color change: slow crossfade (default), or instant (live state only, implies --temp)",
+    )
     add_write_options(effect)
     effect.set_defaults(func=cmd_effect)
     return parser

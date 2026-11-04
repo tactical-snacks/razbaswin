@@ -163,6 +163,11 @@ class BasiliskV3:
         args = bytes([storage, led_id]) + payload
         self.transact(0x0F, 0x02, len(args), args)
 
+    def set_custom_frame(self, first: int, last: int, colors: list[tuple[int, int, int]]) -> None:
+        """Fill frame cells first..last (row 0). Shown at once by zones in the custom effect."""
+        args = bytes([0x00, 0x00, 0x00, first, last]) + bytes(c for rgb in colors for c in rgb)
+        self.transact(0x0F, 0x03, len(args), args)
+
     def set_dpi(self, x: int, y: int, storage: int) -> None:
         self.transact(0x04, 0x05, 0x07, bytes([storage, x >> 8, x & 0xFF, y >> 8, y & 0xFF, 0, 0]))
 
