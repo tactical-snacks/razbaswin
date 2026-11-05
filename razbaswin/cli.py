@@ -1,5 +1,7 @@
 import argparse
+import colorsys
 import json
+import random
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -405,11 +407,19 @@ def cmd_effect(args: argparse.Namespace) -> int:
     if instant and args.profile is not None:
         print("error: --trans instant can't be saved to a profile; it changes the live state only", file=sys.stderr)
         return 2
+    is_random = None in args.colors
+    if is_random:
+        # 'random' is a try-it-out color: live state only unless a profile is named.
+        args.colors = [random_color() if c is None else c for c in args.colors]
+        if args.profile is None:
+            args.temp = True
     try:
         payload = effect_payload(args.effect, args.colors, args.speed, args.direction)
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+    if is_random:
+        print("Random color: " + ", ".join(f"#{r:02x}{g:02x}{b:02x}" for r, g, b in args.colors))
     zones = selected_zones(args)
     with BasiliskV3(args.pid) as mouse:
         if instant:
@@ -446,7 +456,16 @@ def brightness_value(s: str) -> int:
     return value
 
 
-def color(s: str) -> tuple[int, int, int]:
+def random_color() -> tuple[int, int, int]:
+    """A random hue at full saturation and value, so it's never dull or near-black."""
+    r, g, b = colorsys.hsv_to_rgb(random.random(), 1.0, 1.0)
+    return (round(r * 255), round(g * 255), round(b * 255))
+
+
+def color(s: str) -> tuple[int, int, int] | None:
+    """RRGGBB hex, or 'random' (returned as None and resolved by the command)."""
+    if s.lower() == "random":
+        return None
     h = s.removeprefix("#")
     if len(h) != 6:
         raise argparse.ArgumentTypeError(f"invalid color {s!r}, expected RRGGBB")
@@ -548,7 +567,8 @@ def build_parser() -> argparse.ArgumentParser:
     effect = sub.add_parser(
         "effect",
         help="Set LED effect",
-        description="static takes one RRGGBB hex color; off, spectrum and wave take none.",
+        description="static takes one RRGGBB hex color, or 'random' (a random vivid color, live state "
+        "only unless --profile is given); off, spectrum and wave take none.",
     )
     effect.add_argument("effect", choices=WRITABLE_EFFECTS)
     effect.add_argument("colors", nargs="*", type=color, metavar="COLOR")
